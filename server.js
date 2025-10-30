@@ -6,7 +6,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
@@ -233,25 +233,14 @@ const limiter = rateLimit({
 });
 
 
-// Database connection pool with SSL support for PlanetScale
-const poolConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'booktracker',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-};
-
-// Add SSL configuration for production (PlanetScale requires SSL)
-if (process.env.DB_SSL === 'true') {
-  poolConfig.ssl = {
-    rejectUnauthorized: true
-  };
-}
-
-const pool = mysql.createPool(poolConfig);
+// Database connection pool for PostgreSQL (Render)
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
 
 
 function authenticateToken(req, res, next) {
@@ -311,10 +300,10 @@ app.get('/api/health', async (req, res) => {
 
 app.get('/api/debug/pending-verifications', async (req, res) => {
   try {
-    const [users] = await pool.query(
+    const result = await pool.query(
       'SELECT id, username, email, email_verified, verification_token, verification_token_expiry FROM users WHERE email_verified = false ORDER BY id DESC LIMIT 10'
     );
-    res.json({ pendingUsers: users });
+    res.json({ pendingUsers: result.rows });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -325,13 +314,13 @@ async function cleanupUnverifiedAccounts() {
   try {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const [result] = await pool.query(
-      'DELETE FROM users WHERE email_verified = false AND created_at < ?',
+    const result = await pool.query(
+      'DELETE FROM users WHERE email_verified = false AND created_at < $1',
       [twentyFourHoursAgo]
     );
 
-    if (result.affectedRows > 0) {
-      console.log(`🧹 Cleaned up ${result.affectedRows} unverified account(s) older than 24 hours`);
+    if (result.rowCount > 0) {
+      console.log(`🧹 Cleaned up ${result.rowCount} unverified account(s) older than 24 hours`);
     }
   } catch (error) {
     console.error('❌ Error cleaning up unverified accounts:', error);
@@ -355,27 +344,27 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Username, email, and password required' });
     }
 
-    const [existing] = await pool.query(
-      'SELECT id FROM users WHERE username = ? OR email = ?',
+    const existing = await pool.query(
+      'SELECT id FROM users WHERE username = $1 OR email = $2',
       [username, email]
     );
 
-    if (existing.length > 0) {
+    if (existing.rows.length > 0) {
       return res.status(409).json({ error: 'Username or email already exists' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    
-    const verificationToken = crypto.randomBytes(32).toString('hex');
-    const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); 
 
-    const [result] = await pool.query(
-      'INSERT INTO users (username, email, password, yearly_goal, email_verified, verification_token, verification_token_expiry) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    const result = await pool.query(
+      'INSERT INTO users (username, email, password, yearly_goal, email_verified, verification_token, verification_token_expiry) VALUES ($1, $2, $3, $4, $5, $6, $7)',
       [username, email, hashedPassword, yearlyGoal || 50, false, verificationToken, tokenExpiry]
     );
 
-    
+
     const baseUrl = process.env.APP_URL || `http://localhost:${PORT}`;
     const verificationLink = `${baseUrl}/api/auth/verify-email/${verificationToken}`;
     const emailHTML = getVerificationEmailHTML(username, verificationLink);
@@ -389,7 +378,7 @@ app.post('/api/auth/register', async (req, res) => {
       console.log(`✅ Verification email sent to ${email}`);
     } catch (emailError) {
       console.error('Failed to send verification email:', emailError);
-      
+
     }
 
     res.status(201).json({
@@ -412,20 +401,20 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+    const users = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const user = users[0];
+    const user = users.rows[0];
     const validPassword = await bcrypt.compare(password, user.password);
 
     if (!validPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    
+
     if (!user.email_verified) {
       return res.status(403).json({
         error: 'Please verify your email before logging in. Check your inbox for the verification link.',
@@ -459,16 +448,16 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
-    const [users] = await pool.query(
-      'SELECT id, username, email, yearly_goal, created_at FROM users WHERE id = ?',
+    const users = await pool.query(
+      'SELECT id, username, email, yearly_goal, created_at FROM users WHERE id = $1',
       [req.user.id]
     );
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json(users[0]);
+    res.json(users.rows[0]);
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Failed to fetch user data' });
@@ -481,13 +470,14 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
     const { username, yearly_goal } = req.body;
     const updates = [];
     const params = [];
+    let paramIndex = 1;
 
     if (username) {
-      updates.push('username = ?');
+      updates.push(`username = $${paramIndex++}`);
       params.push(username);
     }
     if (yearly_goal !== undefined) {
-      updates.push('yearly_goal = ?');
+      updates.push(`yearly_goal = $${paramIndex++}`);
       params.push(yearly_goal);
     }
 
@@ -498,7 +488,7 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
     params.push(req.user.id);
 
     await pool.query(
-      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+      `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
       params
     );
 
@@ -522,30 +512,30 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'New password must be at least 6 characters' });
     }
 
-    const [users] = await pool.query(
-      'SELECT * FROM users WHERE id = ?',
+    const users = await pool.query(
+      'SELECT * FROM users WHERE id = $1',
       [req.user.id]
     );
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = users[0];
+    const user = users.rows[0];
 
-    
+
     const validPassword = await bcrypt.compare(currentPassword, user.password);
 
     if (!validPassword) {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
 
-    
+
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    
+
     await pool.query(
-      'UPDATE users SET password = ? WHERE id = ?',
+      'UPDATE users SET password = $1 WHERE id = $2',
       [hashedPassword, req.user.id]
     );
 
@@ -559,13 +549,13 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
 
 app.delete('/api/auth/delete-account', authenticateToken, async (req, res) => {
   try {
-    
-    const [result] = await pool.query(
-      'DELETE FROM users WHERE id = ?',
+
+    const result = await pool.query(
+      'DELETE FROM users WHERE id = $1',
       [req.user.id]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -579,34 +569,34 @@ app.delete('/api/auth/delete-account', authenticateToken, async (req, res) => {
 
 app.get('/api/auth/account-stats', authenticateToken, async (req, res) => {
   try {
-    const [bookCount] = await pool.query(
-      'SELECT COUNT(*) as count FROM books WHERE user_id = ?',
+    const bookCount = await pool.query(
+      'SELECT COUNT(*) as count FROM books WHERE user_id = $1',
       [req.user.id]
     );
 
-    const [finishedCount] = await pool.query(
-      'SELECT COUNT(*) as count FROM books WHERE user_id = ? AND status = "Finished"',
+    const finishedCount = await pool.query(
+      'SELECT COUNT(*) as count FROM books WHERE user_id = $1 AND status = $2',
+      [req.user.id, 'Finished']
+    );
+
+    const totalPages = await pool.query(
+      'SELECT SUM(pages) as total FROM books WHERE user_id = $1 AND status = $2',
+      [req.user.id, 'Finished']
+    );
+
+    const accountAge = await pool.query(
+      'SELECT created_at FROM users WHERE id = $1',
       [req.user.id]
     );
 
-    const [totalPages] = await pool.query(
-      'SELECT SUM(pages) as total FROM books WHERE user_id = ? AND status = "Finished"',
-      [req.user.id]
-    );
-
-    const [accountAge] = await pool.query(
-      'SELECT created_at FROM users WHERE id = ?',
-      [req.user.id]
-    );
-
-    const createdAt = new Date(accountAge[0].created_at);
+    const createdAt = new Date(accountAge.rows[0].created_at);
     const daysActive = Math.floor((new Date() - createdAt) / (1000 * 60 * 60 * 24));
 
     res.json({
-      totalBooks: bookCount[0].count,
-      finishedBooks: finishedCount[0].count,
-      totalPages: totalPages[0].total || 0,
-      accountCreated: accountAge[0].created_at,
+      totalBooks: bookCount.rows[0].count,
+      finishedBooks: finishedCount.rows[0].count,
+      totalPages: totalPages.rows[0].total || 0,
+      accountCreated: accountAge.rows[0].created_at,
       daysActive: daysActive
     });
   } catch (error) {
@@ -624,29 +614,29 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
   try {
     const { token } = req.params;
 
-    const [users] = await pool.query(
-      'SELECT id, email, verification_token_expiry FROM users WHERE verification_token = ?',
+    const users = await pool.query(
+      'SELECT id, email, verification_token_expiry FROM users WHERE verification_token = $1',
       [token]
     );
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.status(400).json({ error: 'Invalid verification token' });
     }
 
-    const user = users[0];
+    const user = users.rows[0];
 
-    
+
     if (new Date() > new Date(user.verification_token_expiry)) {
       return res.status(400).json({ error: 'Verification token has expired' });
     }
 
-    
+
     await pool.query(
-      'UPDATE users SET email_verified = true, verification_token = NULL, verification_token_expiry = NULL WHERE id = ?',
+      'UPDATE users SET email_verified = true, verification_token = NULL, verification_token_expiry = NULL WHERE id = $1',
       [user.id]
     );
 
-    
+
     res.redirect(`${process.env.APP_URL}/login.html?verified=true`);
   } catch (error) {
     console.error('Email verification error:', error);
@@ -663,28 +653,28 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       return res.status(400).json({ error: 'Email required' });
     }
 
-    const [users] = await pool.query(
-      'SELECT id, username FROM users WHERE email = ?',
+    const users = await pool.query(
+      'SELECT id, username FROM users WHERE email = $1',
       [email]
     );
 
-    
-    if (users.length === 0) {
+
+    if (users.rows.length === 0) {
       return res.json({ message: 'If an account exists with that email, a password reset link has been sent.' });
     }
 
-    const user = users[0];
+    const user = users.rows[0];
 
-    
+
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const tokenExpiry = new Date(Date.now() + 60 * 60 * 1000); 
+    const tokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
 
     await pool.query(
-      'UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?',
+      'UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE id = $3',
       [resetToken, tokenExpiry, user.id]
     );
 
-    
+
     const resetLink = `${process.env.APP_URL}/reset-password.html?token=${resetToken}`;
     const emailHTML = getPasswordResetEmailHTML(user.username, resetLink);
 
@@ -697,7 +687,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       console.log(`✅ Password reset email sent to ${email}`);
     } catch (emailError) {
       console.error('Failed to send password reset email:', emailError);
-      
+
     }
 
     res.json({
@@ -722,28 +712,28 @@ app.post('/api/auth/reset-password', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const [users] = await pool.query(
-      'SELECT id, reset_token_expiry FROM users WHERE reset_token = ?',
+    const users = await pool.query(
+      'SELECT id, reset_token_expiry FROM users WHERE reset_token = $1',
       [token]
     );
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.status(400).json({ error: 'Invalid or expired reset token' });
     }
 
-    const user = users[0];
+    const user = users.rows[0];
 
-    
+
     if (new Date() > new Date(user.reset_token_expiry)) {
       return res.status(400).json({ error: 'Reset token has expired' });
     }
 
-    
+
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    
+
     await pool.query(
-      'UPDATE users SET password = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?',
+      'UPDATE users SET password = $1, reset_token = NULL, reset_token_expiry = NULL WHERE id = $2',
       [hashedPassword, user.id]
     );
 
@@ -763,40 +753,40 @@ app.post('/api/auth/resend-verification', async (req, res) => {
       return res.status(400).json({ error: 'Email required' });
     }
 
-    const [users] = await pool.query(
-      'SELECT id, email_verified FROM users WHERE email = ?',
+    const users = await pool.query(
+      'SELECT id, email_verified FROM users WHERE email = $1',
       [email]
     );
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.json({ message: 'If an account exists with that email, a verification link has been sent.' });
     }
 
-    const user = users[0];
+    const user = users.rows[0];
 
     if (user.email_verified) {
       return res.status(400).json({ error: 'Email is already verified' });
     }
 
-    
+
     const verificationToken = crypto.randomBytes(32).toString('hex');
-    const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); 
+    const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     await pool.query(
-      'UPDATE users SET verification_token = ?, verification_token_expiry = ? WHERE id = ?',
+      'UPDATE users SET verification_token = $1, verification_token_expiry = $2 WHERE id = $3',
       [verificationToken, tokenExpiry, user.id]
     );
 
-    
-    const [userDetails] = await pool.query(
-      'SELECT username FROM users WHERE id = ?',
+
+    const userDetails = await pool.query(
+      'SELECT username FROM users WHERE id = $1',
       [user.id]
     );
 
 
     const baseUrl = process.env.APP_URL || `http://localhost:${PORT}`;
     const verificationLink = `${baseUrl}/api/auth/verify-email/${verificationToken}`;
-    const emailHTML = getVerificationEmailHTML(userDetails[0].username, verificationLink);
+    const emailHTML = getVerificationEmailHTML(userDetails.rows[0].username, verificationLink);
 
     try {
       await sendEmail(
@@ -807,7 +797,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
       console.log(`✅ Verification email resent to ${email}`);
     } catch (emailError) {
       console.error('Failed to resend verification email:', emailError);
-      
+
     }
 
     res.json({
@@ -846,16 +836,17 @@ console.log('✅ AI configuration routes added successfully');
 app.get('/api/books', authenticateToken, async (req, res) => {
   try {
     const { status, genre, sort } = req.query;
-    let query = 'SELECT * FROM books WHERE user_id = ?';
+    let query = 'SELECT * FROM books WHERE user_id = $1';
     const params = [req.user.id];
+    let paramIndex = 2;
 
     if (status) {
-      query += ' AND status = ?';
+      query += ` AND status = $${paramIndex++}`;
       params.push(status);
     }
 
     if (genre) {
-      query += ' AND genre = ?';
+      query += ` AND genre = $${paramIndex++}`;
       params.push(genre);
     }
 
@@ -869,8 +860,8 @@ app.get('/api/books', authenticateToken, async (req, res) => {
       query += ' ORDER BY created_at DESC';
     }
 
-    const [books] = await pool.query(query, params);
-    res.json(books);
+    const books = await pool.query(query, params);
+    res.json(books.rows);
   } catch (error) {
     console.error('Get books error:', error);
     res.status(500).json({ error: 'Failed to fetch books' });
@@ -880,16 +871,16 @@ app.get('/api/books', authenticateToken, async (req, res) => {
 
 app.get('/api/books/:id', authenticateToken, async (req, res) => {
   try {
-    const [books] = await pool.query(
-      'SELECT * FROM books WHERE id = ? AND user_id = ?',
+    const books = await pool.query(
+      'SELECT * FROM books WHERE id = $1 AND user_id = $2',
       [req.params.id, req.user.id]
     );
 
-    if (books.length === 0) {
+    if (books.rows.length === 0) {
       return res.status(404).json({ error: 'Book not found' });
     }
 
-    res.json(books[0]);
+    res.json(books.rows[0]);
   } catch (error) {
     console.error('Get book error:', error);
     res.status(500).json({ error: 'Failed to fetch book' });
@@ -909,12 +900,12 @@ app.post('/api/books', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Title and author required' });
     }
 
-    const [result] = await pool.query(
+    const result = await pool.query(
       `INSERT INTO books (
         user_id, title, author, isbn, status, rating, progress, pages,
         genre, last_read_date, reading_time, description, publisher,
         published_date, cover_url, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
       [
         req.user.id, title, author, isbn, status || 'Currently Reading',
         rating, progress || 0, pages || 0, genre, lastReadDate,
@@ -923,12 +914,7 @@ app.post('/api/books', authenticateToken, async (req, res) => {
       ]
     );
 
-    const [newBook] = await pool.query(
-      'SELECT * FROM books WHERE id = ?',
-      [result.insertId]
-    );
-
-    res.status(201).json(newBook[0]);
+    res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Add book error:', error);
     res.status(500).json({ error: 'Failed to add book' });
@@ -946,22 +932,23 @@ app.put('/api/books/:id', authenticateToken, async (req, res) => {
 
     const updates = [];
     const params = [];
+    let paramIndex = 1;
 
-    if (title) { updates.push('title = ?'); params.push(title); }
-    if (author) { updates.push('author = ?'); params.push(author); }
-    if (isbn !== undefined) { updates.push('isbn = ?'); params.push(isbn); }
-    if (status) { updates.push('status = ?'); params.push(status); }
-    if (rating !== undefined) { updates.push('rating = ?'); params.push(rating); }
-    if (progress !== undefined) { updates.push('progress = ?'); params.push(progress); }
-    if (pages !== undefined) { updates.push('pages = ?'); params.push(pages); }
-    if (genre) { updates.push('genre = ?'); params.push(genre); }
-    if (lastReadDate) { updates.push('last_read_date = ?'); params.push(lastReadDate); }
-    if (readingTime !== undefined) { updates.push('reading_time = ?'); params.push(readingTime); }
-    if (description !== undefined) { updates.push('description = ?'); params.push(description); }
-    if (publisher !== undefined) { updates.push('publisher = ?'); params.push(publisher); }
-    if (publishedDate !== undefined) { updates.push('published_date = ?'); params.push(publishedDate); }
-    if (coverUrl !== undefined) { updates.push('cover_url = ?'); params.push(coverUrl); }
-    if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
+    if (title) { updates.push(`title = $${paramIndex++}`); params.push(title); }
+    if (author) { updates.push(`author = $${paramIndex++}`); params.push(author); }
+    if (isbn !== undefined) { updates.push(`isbn = $${paramIndex++}`); params.push(isbn); }
+    if (status) { updates.push(`status = $${paramIndex++}`); params.push(status); }
+    if (rating !== undefined) { updates.push(`rating = $${paramIndex++}`); params.push(rating); }
+    if (progress !== undefined) { updates.push(`progress = $${paramIndex++}`); params.push(progress); }
+    if (pages !== undefined) { updates.push(`pages = $${paramIndex++}`); params.push(pages); }
+    if (genre) { updates.push(`genre = $${paramIndex++}`); params.push(genre); }
+    if (lastReadDate) { updates.push(`last_read_date = $${paramIndex++}`); params.push(lastReadDate); }
+    if (readingTime !== undefined) { updates.push(`reading_time = $${paramIndex++}`); params.push(readingTime); }
+    if (description !== undefined) { updates.push(`description = $${paramIndex++}`); params.push(description); }
+    if (publisher !== undefined) { updates.push(`publisher = $${paramIndex++}`); params.push(publisher); }
+    if (publishedDate !== undefined) { updates.push(`published_date = $${paramIndex++}`); params.push(publishedDate); }
+    if (coverUrl !== undefined) { updates.push(`cover_url = $${paramIndex++}`); params.push(coverUrl); }
+    if (notes !== undefined) { updates.push(`notes = $${paramIndex++}`); params.push(notes); }
 
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No updates provided' });
@@ -969,21 +956,21 @@ app.put('/api/books/:id', authenticateToken, async (req, res) => {
 
     params.push(req.params.id, req.user.id);
 
-    const [result] = await pool.query(
-      `UPDATE books SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`,
+    const result = await pool.query(
+      `UPDATE books SET ${updates.join(', ')} WHERE id = $${paramIndex++} AND user_id = $${paramIndex}`,
       params
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Book not found' });
     }
 
-    const [updatedBook] = await pool.query(
-      'SELECT * FROM books WHERE id = ?',
+    const updatedBook = await pool.query(
+      'SELECT * FROM books WHERE id = $1',
       [req.params.id]
     );
 
-    res.json(updatedBook[0]);
+    res.json(updatedBook.rows[0]);
   } catch (error) {
     console.error('Update book error:', error);
     res.status(500).json({ error: 'Failed to update book' });
@@ -993,12 +980,12 @@ app.put('/api/books/:id', authenticateToken, async (req, res) => {
 
 app.delete('/api/books/:id', authenticateToken, async (req, res) => {
   try {
-    const [result] = await pool.query(
-      'DELETE FROM books WHERE id = ? AND user_id = ?',
+    const result = await pool.query(
+      'DELETE FROM books WHERE id = $1 AND user_id = $2',
       [req.params.id, req.user.id]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Book not found' });
     }
 
@@ -1014,15 +1001,15 @@ app.delete('/api/books/:id', authenticateToken, async (req, res) => {
 
 app.get('/api/books/:bookId/sessions', authenticateToken, async (req, res) => {
   try {
-    const [sessions] = await pool.query(
+    const sessions = await pool.query(
       `SELECT rs.* FROM reading_sessions rs
        INNER JOIN books b ON rs.book_id = b.id
-       WHERE rs.book_id = ? AND b.user_id = ?
+       WHERE rs.book_id = $1 AND b.user_id = $2
        ORDER BY rs.session_date DESC`,
       [req.params.bookId, req.user.id]
     );
 
-    res.json(sessions);
+    res.json(sessions.rows);
   } catch (error) {
     console.error('Get sessions error:', error);
     res.status(500).json({ error: 'Failed to fetch reading sessions' });
@@ -1038,32 +1025,27 @@ app.post('/api/books/:bookId/sessions', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Date and duration required' });
     }
 
-    const [books] = await pool.query(
-      'SELECT id FROM books WHERE id = ? AND user_id = ?',
+    const books = await pool.query(
+      'SELECT id FROM books WHERE id = $1 AND user_id = $2',
       [req.params.bookId, req.user.id]
     );
 
-    if (books.length === 0) {
+    if (books.rows.length === 0) {
       return res.status(404).json({ error: 'Book not found' });
     }
 
-    const [result] = await pool.query(
+    const result = await pool.query(
       `INSERT INTO reading_sessions (book_id, user_id, session_date, duration, pages_read, notes)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
       [req.params.bookId, req.user.id, date, duration, pagesRead || 0, notes]
     );
 
     await pool.query(
-      'UPDATE books SET reading_time = reading_time + ? WHERE id = ?',
+      'UPDATE books SET reading_time = reading_time + $1 WHERE id = $2',
       [duration, req.params.bookId]
     );
 
-    const [newSession] = await pool.query(
-      'SELECT * FROM reading_sessions WHERE id = ?',
-      [result.insertId]
-    );
-
-    res.status(201).json(newSession[0]);
+    res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Add session error:', error);
     res.status(500).json({ error: 'Failed to add reading session' });
@@ -1079,81 +1061,81 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
     const yearStart = `${currentYear}-01-01`;
     const yearEnd = `${currentYear}-12-31`;
 
-    
-    const [booksRead] = await pool.query(
-      'SELECT COUNT(*) as count FROM books WHERE user_id = ? AND status = "Finished" AND last_read_date >= ? AND last_read_date <= ?',
+
+    const booksRead = await pool.query(
+      'SELECT COUNT(*) as count FROM books WHERE user_id = $1 AND status = $2 AND last_read_date >= $3 AND last_read_date <= $4',
+      [req.user.id, 'Finished', yearStart, yearEnd]
+    );
+
+
+    const totalPages = await pool.query(
+      'SELECT SUM(pages) as total FROM books WHERE user_id = $1 AND status = $2 AND last_read_date >= $3 AND last_read_date <= $4',
+      [req.user.id, 'Finished', yearStart, yearEnd]
+    );
+
+
+    const avgRating = await pool.query(
+      'SELECT AVG(rating) as avg FROM books WHERE user_id = $1 AND rating IS NOT NULL AND last_read_date >= $2 AND last_read_date <= $3',
       [req.user.id, yearStart, yearEnd]
     );
 
-    
-    const [totalPages] = await pool.query(
-      'SELECT SUM(pages) as total FROM books WHERE user_id = ? AND status = "Finished" AND last_read_date >= ? AND last_read_date <= ?',
+
+    const totalTime = await pool.query(
+      'SELECT SUM(reading_time) as total FROM books WHERE user_id = $1 AND last_read_date >= $2 AND last_read_date <= $3',
       [req.user.id, yearStart, yearEnd]
     );
 
-    
-    const [avgRating] = await pool.query(
-      'SELECT AVG(rating) as avg FROM books WHERE user_id = ? AND rating IS NOT NULL AND last_read_date >= ? AND last_read_date <= ?',
-      [req.user.id, yearStart, yearEnd]
+
+    const allTimeBooksRead = await pool.query(
+      'SELECT COUNT(*) as count FROM books WHERE user_id = $1 AND status = $2',
+      [req.user.id, 'Finished']
     );
 
-    
-    const [totalTime] = await pool.query(
-      'SELECT SUM(reading_time) as total FROM books WHERE user_id = ? AND last_read_date >= ? AND last_read_date <= ?',
-      [req.user.id, yearStart, yearEnd]
+    const allTimeTotalPages = await pool.query(
+      'SELECT SUM(pages) as total FROM books WHERE user_id = $1 AND status = $2',
+      [req.user.id, 'Finished']
     );
 
-    
-    const [allTimeBooksRead] = await pool.query(
-      'SELECT COUNT(*) as count FROM books WHERE user_id = ? AND status = "Finished"',
-      [req.user.id]
-    );
 
-    const [allTimeTotalPages] = await pool.query(
-      'SELECT SUM(pages) as total FROM books WHERE user_id = ? AND status = "Finished"',
-      [req.user.id]
-    );
-
-    
-    const [favoriteGenre] = await pool.query(
+    const favoriteGenre = await pool.query(
       `SELECT genre, COUNT(*) as count FROM books
-       WHERE user_id = ? AND status = "Finished" AND genre IS NOT NULL
-       AND last_read_date >= ? AND last_read_date <= ?
+       WHERE user_id = $1 AND status = $2 AND genre IS NOT NULL
+       AND last_read_date >= $3 AND last_read_date <= $4
        GROUP BY genre ORDER BY count DESC LIMIT 1`,
-      [req.user.id, yearStart, yearEnd]
+      [req.user.id, 'Finished', yearStart, yearEnd]
     );
 
-    
-    const [monthlyBooks] = await pool.query(
-      `SELECT DATE_FORMAT(last_read_date, '%Y-%m') as month, COUNT(*) as count
-       FROM books WHERE user_id = ? AND status = "Finished" AND last_read_date >= ? AND last_read_date <= ?
-       GROUP BY month ORDER BY month DESC`,
-      [req.user.id, yearStart, yearEnd]
+
+    const monthlyBooks = await pool.query(
+      `SELECT TO_CHAR(last_read_date, 'YYYY-MM') as month, COUNT(*) as count
+       FROM books WHERE user_id = $1 AND status = $2 AND last_read_date >= $3 AND last_read_date <= $4
+       GROUP BY TO_CHAR(last_read_date, 'YYYY-MM') ORDER BY month DESC`,
+      [req.user.id, 'Finished', yearStart, yearEnd]
     );
 
-    
-    const [genreDistribution] = await pool.query(
+
+    const genreDistribution = await pool.query(
       `SELECT genre, COUNT(*) as count FROM books
-       WHERE user_id = ? AND status = "Finished" AND genre IS NOT NULL
-       AND last_read_date >= ? AND last_read_date <= ?
+       WHERE user_id = $1 AND status = $2 AND genre IS NOT NULL
+       AND last_read_date >= $3 AND last_read_date <= $4
        GROUP BY genre ORDER BY count DESC`,
-      [req.user.id, yearStart, yearEnd]
+      [req.user.id, 'Finished', yearStart, yearEnd]
     );
 
-    const [recentBooks] = await pool.query(
+    const recentBooks = await pool.query(
       `SELECT DISTINCT last_read_date FROM books
-       WHERE user_id = ? AND last_read_date IS NOT NULL
+       WHERE user_id = $1 AND last_read_date IS NOT NULL
        ORDER BY last_read_date DESC LIMIT 100`,
       [req.user.id]
     );
 
     let streak = 0;
-    if (recentBooks.length > 0) {
+    if (recentBooks.rows.length > 0) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       let currentDate = today;
 
-      for (const book of recentBooks) {
+      for (const book of recentBooks.rows) {
         const bookDate = new Date(book.last_read_date);
         bookDate.setHours(0, 0, 0, 0);
         const diffDays = Math.floor((currentDate - bookDate) / (1000 * 60 * 60 * 24));
@@ -1173,18 +1155,18 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
 
     res.json({
       year: currentYear,
-      booksRead: booksRead[0].count,
-      totalPages: totalPages[0].total || 0,
-      averageRating: avgRating[0].avg ? parseFloat(avgRating[0].avg).toFixed(1) : 0,
-      totalReadingTime: totalTime[0].total || 0,
-      favoriteGenre: favoriteGenre[0]?.genre || 'N/A',
+      booksRead: booksRead.rows[0].count,
+      totalPages: totalPages.rows[0].total || 0,
+      averageRating: avgRating.rows[0].avg ? parseFloat(avgRating.rows[0].avg).toFixed(1) : 0,
+      totalReadingTime: totalTime.rows[0].total || 0,
+      favoriteGenre: favoriteGenre.rows[0]?.genre || 'N/A',
       readingStreak: streak,
-      monthlyBooks: monthlyBooks,
-      genreDistribution: genreDistribution,
+      monthlyBooks: monthlyBooks.rows,
+      genreDistribution: genreDistribution.rows,
 
       allTime: {
-        booksRead: allTimeBooksRead[0].count,
-        totalPages: allTimeTotalPages[0].total || 0
+        booksRead: allTimeBooksRead.rows[0].count,
+        totalPages: allTimeTotalPages.rows[0].total || 0
       }
     });
   } catch (error) {
@@ -1285,16 +1267,16 @@ app.get('/api/discovery/trending', authenticateToken, async (req, res) => {
 
 app.get('/api/discovery/recommendations', authenticateToken, async (req, res) => {
   try {
-    
-    const [favoriteGenres] = await pool.query(
+
+    const favoriteGenres = await pool.query(
       `SELECT genre, COUNT(*) as count FROM books
-       WHERE user_id = ? AND status = "Finished" AND rating >= 4 AND genre IS NOT NULL
+       WHERE user_id = $1 AND status = $2 AND rating >= 4 AND genre IS NOT NULL
        GROUP BY genre ORDER BY count DESC LIMIT 3`,
-      [req.user.id]
+      [req.user.id, 'Finished']
     );
 
-    if (favoriteGenres.length === 0) {
-      
+    if (favoriteGenres.rows.length === 0) {
+
       const url = `https://www.googleapis.com/books/v1/volumes?q=popular+fiction&orderBy=relevance&maxResults=20`;
       const response = await fetch(url);
       const data = await response.json();
@@ -1312,8 +1294,8 @@ app.get('/api/discovery/recommendations', authenticateToken, async (req, res) =>
       return res.json(books);
     }
 
-    
-    const genre = favoriteGenres[0].genre;
+
+    const genre = favoriteGenres.rows[0].genre;
     const url = `https://www.googleapis.com/books/v1/volumes?q=subject:${encodeURIComponent(genre)}&orderBy=relevance&maxResults=20`;
 
     const response = await fetch(url);
@@ -1374,13 +1356,13 @@ app.get('/api/discovery/genre/:genre', authenticateToken, async (req, res) => {
 
 app.get('/api/discovery/preferences', authenticateToken, async (req, res) => {
   try {
-    const [prefs] = await pool.query(
-      'SELECT * FROM user_preferences WHERE user_id = ?',
+    const prefs = await pool.query(
+      'SELECT * FROM user_preferences WHERE user_id = $1',
       [req.user.id]
     );
 
-    if (prefs.length === 0) {
-      
+    if (prefs.rows.length === 0) {
+
       return res.json({
         favorite_genres: [],
         excluded_genres: [],
@@ -1391,12 +1373,12 @@ app.get('/api/discovery/preferences', authenticateToken, async (req, res) => {
       });
     }
 
-    
-    const pref = prefs[0];
+
+    const pref = prefs.rows[0];
     return res.json({
       favorite_genres: JSON.parse(pref.favorite_genres || '[]'),
-      excluded_genres: [], 
-      excluded_authors: [], 
+      excluded_genres: [],
+      excluded_authors: [],
       reading_goals: JSON.parse(pref.reading_goals || '{}'),
       notifications_enabled: pref.notifications_enabled,
       theme: pref.theme || 'dark'
@@ -1419,16 +1401,16 @@ app.put('/api/discovery/preferences', authenticateToken, async (req, res) => {
       theme
     } = req.body;
 
-    const [existing] = await pool.query(
-      'SELECT id FROM user_preferences WHERE user_id = ?',
+    const existing = await pool.query(
+      'SELECT id FROM user_preferences WHERE user_id = $1',
       [req.user.id]
     );
 
-    if (existing.length === 0) {
-      
+    if (existing.rows.length === 0) {
+
       await pool.query(
         `INSERT INTO user_preferences (user_id, favorite_genres, reading_goals, notifications_enabled, theme)
-         VALUES (?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5)`,
         [
           req.user.id,
           JSON.stringify(favorite_genres || []),
@@ -1438,31 +1420,32 @@ app.put('/api/discovery/preferences', authenticateToken, async (req, res) => {
         ]
       );
     } else {
-      
+
       const updates = [];
       const params = [];
+      let paramIndex = 1;
 
       if (favorite_genres !== undefined) {
-        updates.push('favorite_genres = ?');
+        updates.push(`favorite_genres = $${paramIndex++}`);
         params.push(JSON.stringify(favorite_genres));
       }
       if (reading_goals !== undefined) {
-        updates.push('reading_goals = ?');
+        updates.push(`reading_goals = $${paramIndex++}`);
         params.push(JSON.stringify(reading_goals));
       }
       if (notifications_enabled !== undefined) {
-        updates.push('notifications_enabled = ?');
+        updates.push(`notifications_enabled = $${paramIndex++}`);
         params.push(notifications_enabled);
       }
       if (theme !== undefined) {
-        updates.push('theme = ?');
+        updates.push(`theme = $${paramIndex++}`);
         params.push(theme);
       }
 
       if (updates.length > 0) {
         params.push(req.user.id);
         await pool.query(
-          `UPDATE user_preferences SET ${updates.join(', ')} WHERE user_id = ?`,
+          `UPDATE user_preferences SET ${updates.join(', ')} WHERE user_id = $${paramIndex}`,
           params
         );
       }
@@ -1482,16 +1465,16 @@ app.get('/api/discovery/search-history', authenticateToken, async (req, res) => 
   try {
     const limit = parseInt(req.query.limit) || 20;
 
-    const [history] = await pool.query(
+    const history = await pool.query(
       `SELECT id, query, results_count, created_at
        FROM search_history
-       WHERE user_id = ?
+       WHERE user_id = $1
        ORDER BY created_at DESC
-       LIMIT ?`,
+       LIMIT $2`,
       [req.user.id, limit]
     );
 
-    res.json(history);
+    res.json(history.rows);
   } catch (error) {
     console.error('Get search history error:', error);
     res.status(500).json({ error: 'Failed to fetch search history' });
@@ -1507,14 +1490,14 @@ app.post('/api/discovery/search-history', authenticateToken, async (req, res) =>
       return res.status(400).json({ error: 'Search query required' });
     }
 
-    const [result] = await pool.query(
-      'INSERT INTO search_history (user_id, query, results_count) VALUES (?, ?, ?)',
+    const result = await pool.query(
+      'INSERT INTO search_history (user_id, query, results_count) VALUES ($1, $2, $3) RETURNING id',
       [req.user.id, query, results_count || 0]
     );
 
     res.json({
       message: 'Search saved successfully',
-      id: result.insertId,
+      id: result.rows[0].id,
       query: query,
       results_count: results_count || 0
     });
@@ -1572,12 +1555,12 @@ app.delete('/api/discovery/saved-searches/:id', authenticateToken, async (req, r
 
 app.get('/api/discovery/reading-lists', authenticateToken, async (req, res) => {
   try {
-    const [lists] = await pool.query(
-      'SELECT * FROM reading_lists WHERE user_id = ? ORDER BY created_at DESC',
+    const lists = await pool.query(
+      'SELECT * FROM reading_lists WHERE user_id = $1 ORDER BY created_at DESC',
       [req.user.id]
     );
 
-    res.json(lists);
+    res.json(lists.rows);
   } catch (error) {
     console.error('Get reading lists error:', error);
     res.status(500).json({ error: 'Failed to fetch reading lists' });
@@ -1593,17 +1576,12 @@ app.post('/api/discovery/reading-lists', authenticateToken, async (req, res) => 
       return res.status(400).json({ error: 'List name required' });
     }
 
-    const [result] = await pool.query(
-      'INSERT INTO reading_lists (user_id, name, description) VALUES (?, ?, ?)',
+    const result = await pool.query(
+      'INSERT INTO reading_lists (user_id, name, description) VALUES ($1, $2, $3) RETURNING *',
       [req.user.id, name, description || null]
     );
 
-    const [newList] = await pool.query(
-      'SELECT * FROM reading_lists WHERE id = ?',
-      [result.insertId]
-    );
-
-    res.status(201).json(newList[0]);
+    res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Create reading list error:', error);
     res.status(500).json({ error: 'Failed to create reading list' });
@@ -1616,22 +1594,22 @@ app.post('/api/discovery/reading-lists/:listId/items', authenticateToken, async 
     const { listId } = req.params;
     const { title, author, isbn, coverUrl, genre } = req.body;
 
-    
-    const [lists] = await pool.query(
-      'SELECT id FROM reading_lists WHERE id = ? AND user_id = ?',
+
+    const lists = await pool.query(
+      'SELECT id FROM reading_lists WHERE id = $1 AND user_id = $2',
       [listId, req.user.id]
     );
 
-    if (lists.length === 0) {
+    if (lists.rows.length === 0) {
       return res.status(404).json({ error: 'Reading list not found' });
     }
 
-    
-    
+
+
     res.json({ message: 'Book added to list' });
 
-    
-    
+
+
   } catch (error) {
     console.error('Add to reading list error:', error);
     res.status(500).json({ error: 'Failed to add book to list' });
@@ -1641,12 +1619,12 @@ app.post('/api/discovery/reading-lists/:listId/items', authenticateToken, async 
 
 app.delete('/api/discovery/reading-lists/:id', authenticateToken, async (req, res) => {
   try {
-    const [result] = await pool.query(
-      'DELETE FROM reading_lists WHERE id = ? AND user_id = ?',
+    const result = await pool.query(
+      'DELETE FROM reading_lists WHERE id = $1 AND user_id = $2',
       [req.params.id, req.user.id]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Reading list not found' });
     }
 
@@ -1679,16 +1657,16 @@ app.post('/api/discovery/interactions', authenticateToken, async (req, res) => {
 
 app.get('/api/discovery/recommendations', authenticateToken, async (req, res) => {
   try {
-    
-    const [favoriteGenres] = await pool.query(
+
+    const favoriteGenres = await pool.query(
       `SELECT genre, COUNT(*) as count FROM books
-       WHERE user_id = ? AND status = "Finished" AND rating >= 4 AND genre IS NOT NULL
+       WHERE user_id = $1 AND status = $2 AND rating >= 4 AND genre IS NOT NULL
        GROUP BY genre ORDER BY count DESC LIMIT 3`,
-      [req.user.id]
+      [req.user.id, 'Finished']
     );
 
-    if (favoriteGenres.length === 0) {
-      
+    if (favoriteGenres.rows.length === 0) {
+
       return res.json({
         favorite_genres: [],
         favorite_authors: [],
@@ -1696,18 +1674,18 @@ app.get('/api/discovery/recommendations', authenticateToken, async (req, res) =>
       });
     }
 
-    
-    const [favoriteAuthors] = await pool.query(
+
+    const favoriteAuthors = await pool.query(
       `SELECT author, COUNT(*) as count FROM books
-       WHERE user_id = ? AND status = "Finished" AND rating >= 4
+       WHERE user_id = $1 AND status = $2 AND rating >= 4
        GROUP BY author ORDER BY count DESC LIMIT 3`,
-      [req.user.id]
+      [req.user.id, 'Finished']
     );
 
-    const genres = favoriteGenres.map(g => g.genre);
-    const authors = favoriteAuthors.map(a => a.author);
+    const genres = favoriteGenres.rows.map(g => g.genre);
+    const authors = favoriteAuthors.rows.map(a => a.author);
 
-    
+
     const recommendationQuery = genres.slice(0, 2).join(' ') + ' highly rated';
 
     res.json({
@@ -1728,12 +1706,12 @@ console.log('✅ Discovery endpoints added successfully');
 
 app.get('/api/lists', authenticateToken, async (req, res) => {
   try {
-    const [lists] = await pool.query(
-      'SELECT * FROM reading_lists WHERE user_id = ? ORDER BY created_at DESC',
+    const lists = await pool.query(
+      'SELECT * FROM reading_lists WHERE user_id = $1 ORDER BY created_at DESC',
       [req.user.id]
     );
 
-    res.json(lists);
+    res.json(lists.rows);
   } catch (error) {
     console.error('Get lists error:', error);
     res.status(500).json({ error: 'Failed to fetch reading lists' });
@@ -1749,17 +1727,12 @@ app.post('/api/lists', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'List name required' });
     }
 
-    const [result] = await pool.query(
-      'INSERT INTO reading_lists (user_id, name, description) VALUES (?, ?, ?)',
+    const result = await pool.query(
+      'INSERT INTO reading_lists (user_id, name, description) VALUES ($1, $2, $3) RETURNING *',
       [req.user.id, name, description || null]
     );
 
-    const [newList] = await pool.query(
-      'SELECT * FROM reading_lists WHERE id = ?',
-      [result.insertId]
-    );
-
-    res.status(201).json(newList[0]);
+    res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Create list error:', error);
     res.status(500).json({ error: 'Failed to create reading list' });
@@ -1775,38 +1748,38 @@ app.post('/api/lists/:listId/books', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Book ID required' });
     }
 
-    
-    const [lists] = await pool.query(
-      'SELECT id FROM reading_lists WHERE id = ? AND user_id = ?',
+
+    const lists = await pool.query(
+      'SELECT id FROM reading_lists WHERE id = $1 AND user_id = $2',
       [req.params.listId, req.user.id]
     );
 
-    if (lists.length === 0) {
+    if (lists.rows.length === 0) {
       return res.status(404).json({ error: 'Reading list not found' });
     }
 
-    
-    const [books] = await pool.query(
-      'SELECT id FROM books WHERE id = ? AND user_id = ?',
+
+    const books = await pool.query(
+      'SELECT id FROM books WHERE id = $1 AND user_id = $2',
       [bookId, req.user.id]
     );
 
-    if (books.length === 0) {
+    if (books.rows.length === 0) {
       return res.status(404).json({ error: 'Book not found' });
     }
 
-    
-    const [existing] = await pool.query(
-      'SELECT id FROM list_books WHERE list_id = ? AND book_id = ?',
+
+    const existing = await pool.query(
+      'SELECT id FROM list_books WHERE list_id = $1 AND book_id = $2',
       [req.params.listId, bookId]
     );
 
-    if (existing.length > 0) {
+    if (existing.rows.length > 0) {
       return res.status(409).json({ error: 'Book already in list' });
     }
 
     await pool.query(
-      'INSERT INTO list_books (list_id, book_id) VALUES (?, ?)',
+      'INSERT INTO list_books (list_id, book_id) VALUES ($1, $2)',
       [req.params.listId, bookId]
     );
 
@@ -1820,16 +1793,16 @@ app.post('/api/lists/:listId/books', authenticateToken, async (req, res) => {
 
 app.get('/api/lists/:listId/books', authenticateToken, async (req, res) => {
   try {
-    const [books] = await pool.query(
+    const books = await pool.query(
       `SELECT b.* FROM books b
        INNER JOIN list_books lb ON b.id = lb.book_id
        INNER JOIN reading_lists rl ON lb.list_id = rl.id
-       WHERE rl.id = ? AND rl.user_id = ?
+       WHERE rl.id = $1 AND rl.user_id = $2
        ORDER BY lb.added_at DESC`,
       [req.params.listId, req.user.id]
     );
 
-    res.json(books);
+    res.json(books.rows);
   } catch (error) {
     console.error('Get list books error:', error);
     res.status(500).json({ error: 'Failed to fetch list books' });
@@ -1844,13 +1817,13 @@ app.get('/api/achievements', authenticateToken, async (req, res) => {
     const currentYear = new Date().getFullYear();
     const year = req.query.year ? parseInt(req.query.year) : currentYear;
 
-    const [achievements] = await pool.query(
-      'SELECT achievement_code, unlocked_at, year FROM achievements WHERE user_id = ? AND year = ? ORDER BY unlocked_at DESC',
+    const achievements = await pool.query(
+      'SELECT achievement_code, unlocked_at, year FROM achievements WHERE user_id = $1 AND year = $2 ORDER BY unlocked_at DESC',
       [req.user.id, year]
     );
 
-    
-    const achievementCodes = achievements.map(a => a.achievement_code);
+
+    const achievementCodes = achievements.rows.map(a => a.achievement_code);
     res.json({
       achievements: achievementCodes,
       year: year,
@@ -1865,13 +1838,13 @@ app.get('/api/achievements', authenticateToken, async (req, res) => {
 
 app.get('/api/achievements/history', authenticateToken, async (req, res) => {
   try {
-    const [achievements] = await pool.query(
-      'SELECT achievement_code, unlocked_at, year FROM achievements WHERE user_id = ? ORDER BY year DESC, unlocked_at DESC',
+    const achievements = await pool.query(
+      'SELECT achievement_code, unlocked_at, year FROM achievements WHERE user_id = $1 ORDER BY year DESC, unlocked_at DESC',
       [req.user.id]
     );
 
-    
-    const byYear = achievements.reduce((acc, ach) => {
+
+    const byYear = achievements.rows.reduce((acc, ach) => {
       if (!acc[ach.year]) acc[ach.year] = [];
       acc[ach.year].push(ach.achievement_code);
       return acc;
@@ -1894,14 +1867,14 @@ app.post('/api/achievements', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Achievements array required' });
     }
 
-    
-    const values = achievements.map(code => [req.user.id, code, currentYear]);
 
-    if (values.length > 0) {
-      await pool.query(
-        'INSERT IGNORE INTO achievements (user_id, achievement_code, year) VALUES ?',
-        [values]
-      );
+    if (achievements.length > 0) {
+      for (const code of achievements) {
+        await pool.query(
+          'INSERT INTO achievements (user_id, achievement_code, year) VALUES ($1, $2, $3) ON CONFLICT (user_id, achievement_code, year) DO NOTHING',
+          [req.user.id, code, currentYear]
+        );
+      }
     }
 
     res.json({
@@ -1925,9 +1898,9 @@ app.post('/api/achievements/unlock', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Achievement code required' });
     }
 
-    
+
     await pool.query(
-      'INSERT IGNORE INTO achievements (user_id, achievement_code, year) VALUES (?, ?, ?)',
+      'INSERT INTO achievements (user_id, achievement_code, year) VALUES ($1, $2, $3) ON CONFLICT (user_id, achievement_code, year) DO NOTHING',
       [req.user.id, achievement_code, currentYear]
     );
 
@@ -1970,222 +1943,11 @@ app.use((err, req, res, next) => {
 
 async function initializeDatabase() {
   try {
-    const connection = await pool.getConnection();
-    
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        username VARCHAR(255) UNIQUE NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        yearly_goal INT DEFAULT 50,
-        email_verified BOOLEAN DEFAULT FALSE,
-        verification_token VARCHAR(255),
-        verification_token_expiry DATETIME,
-        reset_token VARCHAR(255),
-        reset_token_expiry DATETIME,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_username (username),
-        INDEX idx_email (email),
-        INDEX idx_verification_token (verification_token),
-        INDEX idx_reset_token (reset_token)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS books (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        title VARCHAR(500) NOT NULL,
-        author VARCHAR(255) NOT NULL,
-        isbn VARCHAR(20),
-        status VARCHAR(50) DEFAULT 'Currently Reading',
-        rating DECIMAL(2,1),
-        progress INT DEFAULT 0,
-        pages INT DEFAULT 0,
-        genre VARCHAR(100),
-        last_read_date DATE,
-        reading_time DECIMAL(10,2) DEFAULT 0,
-        description TEXT,
-        notes TEXT,
-        publisher VARCHAR(255),
-        published_date VARCHAR(50),
-        cover_url VARCHAR(500),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        INDEX idx_user_id (user_id),
-        INDEX idx_status (status),
-        INDEX idx_genre (genre),
-        INDEX idx_last_read_date (last_read_date)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS reading_sessions (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        book_id INT NOT NULL,
-        user_id INT NOT NULL,
-        session_date DATE NOT NULL,
-        duration DECIMAL(10,2) NOT NULL,
-        pages_read INT DEFAULT 0,
-        notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        INDEX idx_user_id (user_id),
-        INDEX idx_book_id (book_id),
-        INDEX idx_session_date (session_date)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS reading_lists (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        name VARCHAR(255) NOT NULL,
-        description TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        INDEX idx_user_id (user_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS list_books (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        list_id INT NOT NULL,
-        book_id INT NOT NULL,
-        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (list_id) REFERENCES reading_lists(id) ON DELETE CASCADE,
-        FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
-        UNIQUE KEY unique_list_book (list_id, book_id),
-        INDEX idx_list_id (list_id),
-        INDEX idx_book_id (book_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS user_preferences (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        favorite_genres JSON,
-        reading_goals JSON,
-        notifications_enabled BOOLEAN DEFAULT TRUE,
-        theme VARCHAR(20) DEFAULT 'dark',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        UNIQUE KEY unique_user_prefs (user_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS book_recommendations (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        book_title VARCHAR(500) NOT NULL,
-        book_author VARCHAR(255) NOT NULL,
-        book_isbn VARCHAR(20),
-        book_cover_url VARCHAR(500),
-        recommendation_score DECIMAL(5,2),
-        recommendation_reason TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        INDEX idx_user_id (user_id),
-        INDEX idx_created_at (created_at)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS achievements (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        achievement_code VARCHAR(100) NOT NULL,
-        year INT NOT NULL,
-        unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        UNIQUE KEY unique_user_achievement_year (user_id, achievement_code, year),
-        INDEX idx_user_id (user_id),
-        INDEX idx_achievement_code (achievement_code),
-        INDEX idx_year (year)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS search_history (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        query VARCHAR(500) NOT NULL,
-        results_count INT DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        INDEX idx_user_id (user_id),
-        INDEX idx_created_at (created_at)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    
-    try {
-      await connection.query(`
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE,
-        ADD COLUMN IF NOT EXISTS verification_token VARCHAR(255),
-        ADD COLUMN IF NOT EXISTS verification_token_expiry DATETIME,
-        ADD COLUMN IF NOT EXISTS reset_token VARCHAR(255),
-        ADD COLUMN IF NOT EXISTS reset_token_expiry DATETIME
-      `);
-      console.log('✅ Email verification columns added/verified');
-    } catch (alterError) {
-      
-      try {
-        await connection.query(`ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT FALSE`);
-      } catch (e) {  }
-      try {
-        await connection.query(`ALTER TABLE users ADD COLUMN verification_token VARCHAR(255)`);
-      } catch (e) {  }
-      try {
-        await connection.query(`ALTER TABLE users ADD COLUMN verification_token_expiry DATETIME`);
-      } catch (e) {  }
-      try {
-        await connection.query(`ALTER TABLE users ADD COLUMN reset_token VARCHAR(255)`);
-      } catch (e) {  }
-      try {
-        await connection.query(`ALTER TABLE users ADD COLUMN reset_token_expiry DATETIME`);
-      } catch (e) {  }
-      console.log('✅ Email verification columns checked');
-    }
-
-    
-    try {
-      await connection.query(`CREATE INDEX IF NOT EXISTS idx_verification_token ON users(verification_token)`);
-      await connection.query(`CREATE INDEX IF NOT EXISTS idx_reset_token ON users(reset_token)`);
-    } catch (indexError) {
-      
-    }
-
-    connection.release();
-    console.log('✅ MySQL database initialized successfully');
-    console.log('📊 All tables created:');
-    console.log('   - users (with email verification)');
-    console.log('   - books');
-    console.log('   - reading_sessions');
-    console.log('   - reading_lists');
-    console.log('   - list_books');
-    console.log('   - user_preferences');
-    console.log('   - book_recommendations');
-    console.log('   - achievements');
-    console.log('   - search_history');
+    // PostgreSQL database - tables should be created via schema.sql
+    // This function just verifies connectivity
+    await pool.query('SELECT 1');
+    console.log('✅ PostgreSQL database connected successfully');
+    console.log('📊 Database tables should be created via schema.sql');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
     throw error;
