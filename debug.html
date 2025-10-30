@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Book Tracker - Debug</title>
+  <style>
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0a0e27;
+      color: #00ff00;
+      padding: 20px;
+      line-height: 1.8;
+    }
+    .status {
+      margin: 10px 0;
+      padding: 10px;
+      border-left: 4px solid #00ff00;
+      background: rgba(0, 255, 0, 0.1);
+    }
+    .error {
+      border-left-color: #ff0000;
+      background: rgba(255, 0, 0, 0.1);
+      color: #ff0000;
+    }
+    .warning {
+      border-left-color: #ffaa00;
+      background: rgba(255, 170, 0, 0.1);
+      color: #ffaa00;
+    }
+    .success {
+      border-left-color: #00ff00;
+    }
+    h1 {
+      color: #6366f1;
+      border-bottom: 2px solid #6366f1;
+      padding-bottom: 10px;
+    }
+    h2 {
+      color: #a855f7;
+      margin-top: 30px;
+    }
+    button {
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      margin: 10px 5px;
+    }
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    }
+    .output {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 8px;
+      padding: 15px;
+      margin-top: 10px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    pre {
+      margin: 5px 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+  </style>
+</head>
+<body>
+  <h1>📚 Book Tracker - System Diagnostic</h1>
+  
+  <div id="diagnostics"></div>
+  
+  <h2>Quick Actions</h2>
+  <button onclick="checkAPI()">Test API Connection</button>
+  <button onclick="checkAuth()">Check Authentication</button>
+  <button onclick="clearStorage()">Clear Local Storage</button>
+  <button onclick="location.href='index.html'">Go to Home</button>
+  <button onclick="location.href='login.html'">Go to Login</button>
+
+  <div class="output" id="output"></div>
+
+  <script>
+    const diagnostics = document.getElementById('diagnostics');
+    const output = document.getElementById('output');
+
+    function log(message, type = 'info') {
+      const timestamp = new Date().toLocaleTimeString();
+      const pre = document.createElement('pre');
+      pre.textContent = `[${timestamp}] ${message}`;
+      pre.style.color = type === 'error' ? '#ff0000' : type === 'warning' ? '#ffaa00' : '#00ff00';
+      output.appendChild(pre);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    function addStatus(title, status, type = 'success') {
+      const div = document.createElement('div');
+      div.className = `status ${type}`;
+      div.innerHTML = `<strong>${title}:</strong> ${status}`;
+      diagnostics.appendChild(div);
+    }
+
+    // Run diagnostics on load
+    async function runDiagnostics() {
+      diagnostics.innerHTML = '<h2>🔍 Running Diagnostics...</h2>';
+      
+      // 1. Check if API object exists
+      if (typeof api !== 'undefined') {
+        addStatus('API Client', '✅ Loaded', 'success');
+        log('API client found');
+      } else {
+        addStatus('API Client', '❌ Not loaded - Check if api.js is included', 'error');
+        log('ERROR: API client not found', 'error');
+      }
+
+      // 2. Check localStorage
+      try {
+        const token = localStorage.getItem('booktracker_token');
+        const user = localStorage.getItem('booktracker_user');
+        
+        if (token) {
+          addStatus('Authentication Token', `✅ Found (${token.substring(0, 20)}...)`, 'success');
+          log('Auth token exists');
+        } else {
+          addStatus('Authentication Token', '⚠️ Not found - You need to login', 'warning');
+          log('No auth token - user not logged in', 'warning');
+        }
+
+        if (user) {
+          const userData = JSON.parse(user);
+          addStatus('User Data', `✅ ${userData.username || 'Unknown'}`, 'success');
+          log(`User: ${JSON.stringify(userData, null, 2)}`);
+        } else {
+          addStatus('User Data', '⚠️ Not found', 'warning');
+        }
+      } catch (err) {
+        addStatus('LocalStorage', `❌ Error: ${err.message}`, 'error');
+        log(`ERROR: ${err.message}`, 'error');
+      }
+
+      // 3. Check server connection
+      addStatus('Server Status', '🔄 Testing...', 'warning');
+      try {
+        const response = await fetch('http://localhost:9000', {
+          method: 'GET',
+          mode: 'cors'
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          addStatus('Server Connection', `✅ Online - ${data.message || 'API Running'}`, 'success');
+          log(`Server response: ${JSON.stringify(data, null, 2)}`);
+        } else {
+          addStatus('Server Connection', `⚠️ HTTP ${response.status}`, 'warning');
+          log(`Server returned status: ${response.status}`, 'warning');
+        }
+      } catch (err) {
+        addStatus('Server Connection', `❌ Cannot reach server - Is it running?`, 'error');
+        log(`ERROR: ${err.message}`, 'error');
+        log('Make sure your backend server is running on port 9000', 'error');
+      }
+
+      // 4. Check browser console errors
+      addStatus('Console', '✅ Check browser DevTools for errors', 'success');
+      log('Open DevTools (F12) and check Console tab for JavaScript errors');
+
+      // 5. Check file structure
+      const files = [
+        'index.html',
+        'library.html', 
+        'add-book.html',
+        'discover.html',
+        'profile.html',
+        'login.html',
+        'api.js',
+        'script.js',
+        'modal-functions.js',
+        'style.css'
+      ];
+      
+      addStatus('Required Files', '🔄 Checking...', 'warning');
+      let missingFiles = [];
+      
+      for (const file of files) {
+        try {
+          const response = await fetch(file, { method: 'HEAD' });
+          if (response.ok) {
+            log(`✅ ${file} - Found`);
+          } else {
+            log(`❌ ${file} - Missing`, 'error');
+            missingFiles.push(file);
+          }
+        } catch (err) {
+          log(`❌ ${file} - Error: ${err.message}`, 'error');
+          missingFiles.push(file);
+        }
+      }
+
+      if (missingFiles.length === 0) {
+        addStatus('File Structure', '✅ All files present', 'success');
+      } else {
+        addStatus('File Structure', `⚠️ Missing: ${missingFiles.join(', ')}`, 'warning');
+      }
+    }
+
+    // Check API connection
+    async function checkAPI() {
+      log('Testing API connection...');
+      try {
+        const response = await fetch('http://localhost:9000/api/search/books?q=test', {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          log(`✅ API responding - Found ${data.length} results`);
+        } else {
+          log(`⚠️ API returned status: ${response.status}`, 'warning');
+        }
+      } catch (err) {
+        log(`❌ API Error: ${err.message}`, 'error');
+        log('Make sure server.js is running: node server.js', 'error');
+      }
+    }
+
+    // Check authentication
+    function checkAuth() {
+      log('Checking authentication...');
+      const token = localStorage.getItem('booktracker_token');
+      const user = localStorage.getItem('booktracker_user');
+      
+      if (token && user) {
+        log('✅ User is authenticated');
+        log(`Token: ${token.substring(0, 30)}...`);
+        log(`User: ${user}`);
+      } else {
+        log('❌ User is NOT authenticated', 'error');
+        log('Go to login page to sign in', 'warning');
+      }
+    }
+
+    // Clear storage
+    function clearStorage() {
+      if (confirm('Clear all local data? You will need to login again.')) {
+        localStorage.clear();
+        log('✅ Local storage cleared');
+        log('Reload the page and login again', 'warning');
+      }
+    }
+
+    // Run on load
+    window.addEventListener('DOMContentLoaded', () => {
+      log('Diagnostic tool started');
+      runDiagnostics();
+    });
+
+    // Catch any errors
+    window.addEventListener('error', (e) => {
+      log(`❌ JavaScript Error: ${e.message} at ${e.filename}:${e.lineno}`, 'error');
+    });
+  </script>
+</body>
+</html>

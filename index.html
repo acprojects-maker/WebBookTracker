@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Book Tracker</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="modal-mobile.css">
+</head>
+<body>
+  
+  <header>
+    <h1>📚 My Book Tracker</h1>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="library.html">Library</a>
+      <a href="add-book.html">Add Book</a>
+      <a href="discover.html">Discover</a>  
+      <a href="profile.html">👤 Profile</a>
+      <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">☀️</button>
+      <button class="logout-btn" onclick="logout()">🚪 Logout</button>
+    </nav>
+  </header>
+
+  
+  <section class="hero">
+    <h2 id="welcome-text">Welcome back!</h2>
+    <p id="goal-progress">Loading goal...</p>
+    <p id="reading-streak">Reading Streak: 0 days</p>
+    <div class="progress-container">
+      <div class="progress-bar" id="goal-progress-bar"></div>
+    </div>
+  </section>
+
+  
+  <section class="stats">
+    <div class="stat-card" id="books-read">0 Books Read</div>
+    <div class="stat-card" id="pages-read">0 Pages Read</div>
+    <div class="stat-card" id="goal">Goal: 0%</div>
+    <div class="stat-card" id="avg-rating">Avg Rating: 0 ⭐</div>
+    <div class="stat-card" id="fav-genre">Favorite Genre: N/A</div>
+    <div class="stat-card" id="total-time">Total Time: 0 hrs</div>
+  </section>
+
+  
+  <section>
+    <h2>📖 Currently Reading</h2>
+    <div class="book-list" id="currently-reading-list"></div>
+  </section>
+
+  
+  <section>
+    <h2>✅ Recently Finished</h2>
+    <div class="book-list" id="recently-finished-list"></div>
+  </section>
+
+  
+  <section>
+    <h2>🏆 Achievements</h2>
+    <div class="badge-list" id="achievements-list">
+      <div class="badge-card">
+        <div class="badge-tier bronze">bronze</div>
+        <div class="badge-icon">🏆</div>
+        <div class="badge-title">5 Books Finished</div>
+        <div class="badge-description">Read your first 5 books</div>
+      </div>
+      <div class="badge-card">
+        <div class="badge-tier silver">silver</div>
+        <div class="badge-icon">📖</div>
+        <div class="badge-title">1000 Pages Read</div>
+        <div class="badge-description">Conquered 1000 pages</div>
+      </div>
+      <div class="badge-card">
+        <div class="badge-tier gold">gold</div>
+        <div class="badge-icon">🔥</div>
+        <div class="badge-title">3-Day Streak</div>
+        <div class="badge-description">Read for 3 consecutive days</div>
+      </div>
+    </div>
+  </section>
+
+  
+  <section>
+    <h2>📊 Reading Statistics</h2>
+    <div class="chart-container">
+      <div class="chart-wrapper">
+        <h3 class="chart-title">📚 Monthly Reading Progress</h3>
+        <canvas id="monthly-progress-chart"></canvas>
+      </div>
+      <div class="chart-wrapper">
+        <h3 class="chart-title">📖 Genre Distribution</h3>
+        <canvas id="genre-distribution-chart"></canvas>
+      </div>
+      <div class="chart-wrapper">
+        <h3 class="chart-title">📄 Pages Read Over Time</h3>
+        <canvas id="pages-over-time-chart"></canvas>
+      </div>
+    </div>
+  </section>
+
+  
+  <section>
+    <h2>💡 Suggested for You</h2>
+    <div class="book-list" id="suggested-books-list"></div>
+  </section>
+
+  
+  <footer>
+    <p>My Book Tracker • Built with ❤️</p>
+  </footer>
+
+
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="api.js"></script>
+  <script src="modal-functions.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

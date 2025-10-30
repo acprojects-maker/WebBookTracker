@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discover - Book Tracker</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="discover-enhanced.css">
+  <link rel="stylesheet" href="modal-mobile.css">
+</head>
+<body>
+  
+  <header>
+    <h1>📚 My Book Tracker</h1>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="library.html">Library</a>
+      <a href="add-book.html">Add Book</a>
+      <a href="discover.html" class="active">Discover</a>
+      <a href="profile.html">👤 Profile</a>
+      <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">☀️</button>
+      <button class="logout-btn" onclick="logout()">🚪 Logout</button>
+    </nav>
+  </header>
+
+  <div class="discover-container">
+    
+    <div class="discover-hero">
+      <div class="ai-badge">
+        ✨ AI-Powered Discovery
+      </div>
+      <h1>Discover Your Next Favorite Book</h1>
+      <p>Search millions of books using natural language and AI-powered recommendations</p>
+
+      
+      <div class="search-box-container">
+        <div class="search-box-discover">
+          <span class="search-icon">🔍</span>
+          <input 
+            type="text" 
+            id="discover-search-input" 
+            class="search-input-discover"
+            placeholder="Try: 'uplifting sci-fi with strong characters' or 'books like The Martian'"
+            onkeypress="handleDiscoverSearchKeypress(event)"
+            onfocus="showSearchHistory()"
+          >
+          <button class="clear-search-btn" id="clear-search-btn" onclick="clearSearch()" style="display: none;">
+            ✕
+          </button>
+          <button class="search-btn-discover" id="discover-search-btn" onclick="performDiscoverSearch()">
+            Search
+          </button>
+          <button class="filters-toggle-btn" onclick="toggleFilters()">
+            <span>⚙️</span> Filters
+          </button>
+        </div>
+
+        
+        <div class="search-history-dropdown" id="search-history-dropdown" style="display: none;">
+          <div class="dropdown-header">
+            <span>Recent Searches</span>
+            <button onclick="closeSearchHistory()">✕</button>
+          </div>
+          <div class="search-history-list" id="search-history-list"></div>
+          <div class="dropdown-footer">
+            <button onclick="showSavedSearches()">📌 Saved Searches</button>
+          </div>
+        </div>
+
+        
+        <div class="example-queries" id="example-queries">
+          <span class="example-query" onclick="quickSearch('emotional fantasy with strong female leads')">
+            💫 Emotional fantasy
+          </span>
+          <span class="example-query" onclick="quickSearch('funny sci-fi like Hitchhikers Guide')">
+            😄 Funny sci-fi
+          </span>
+          <span class="example-query" onclick="quickSearch('dark mystery thriller gripping')">
+            🔪 Dark mystery
+          </span>
+          <span class="example-query" onclick="quickSearch('inspiring biography overcoming adversity')">
+            💪 Inspiring biography
+          </span>
+        </div>
+      </div>
+    </div>
+
+    
+    <div class="filters-panel" id="filters-panel" style="display: none;">
+      <div class="filters-header">
+        <h3>🎯 Advanced Filters</h3>
+        <div class="filters-actions">
+          <button class="btn-secondary" onclick="resetFilters()">Reset All</button>
+          <button class="btn-primary" onclick="saveCurrentSearch()">💾 Save Search</button>
+          <button class="filters-close" onclick="toggleFilters()">✕</button>
+        </div>
+      </div>
+      
+      <div class="filters-body">
+        <div class="filter-group">
+          <label>📊 Sort By</label>
+          <select id="filter-sort">
+            <option value="relevance">Relevance</option>
+            <option value="popular">Most Popular</option>
+            <option value="newest">Newest First</option>
+            <option value="highest_rated">Highest Rated</option>
+            <option value="shortest">Shortest First</option>
+            <option value="longest">Longest First</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label>📚 Book Length</label>
+          <div class="length-buttons">
+            <button class="length-btn active" data-length="any" onclick="selectLength('any')">Any</button>
+            <button class="length-btn" data-length="short" onclick="selectLength('short')">Short (&lt;200)</button>
+            <button class="length-btn" data-length="medium" onclick="selectLength('medium')">Medium (200-400)</button>
+            <button class="length-btn" data-length="long" onclick="selectLength('long')">Long (400+)</button>
+          </div>
+        </div>
+
+        <div class="filter-row">
+          <div class="filter-group">
+            <label>⭐ Minimum Rating</label>
+            <select id="filter-min-rating">
+              <option value="0">Any Rating</option>
+              <option value="3">3+ Stars</option>
+              <option value="3.5">3.5+ Stars</option>
+              <option value="4">4+ Stars</option>
+              <option value="4.5">4.5+ Stars</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label>📅 Publication Year</label>
+            <select id="filter-decade">
+              <option value="any">Any Time</option>
+              <option value="2020">2020s</option>
+              <option value="2010">2010s</option>
+              <option value="2000">2000s</option>
+              <option value="1990">1990s</option>
+              <option value="1980">1980s & Earlier</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <label>📖 Page Range</label>
+          <div class="range-inputs">
+            <input type="number" id="filter-min-pages" placeholder="Min" min="0">
+            <span>to</span>
+            <input type="number" id="filter-max-pages" placeholder="Max" min="0">
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <label>🎭 Exclude Genres</label>
+          <div class="genre-chips" id="excluded-genres-chips"></div>
+          <button class="btn-secondary-small" onclick="showGenreExcludeModal()">+ Add Genre</button>
+        </div>
+
+        <div class="filter-group">
+          <label>✍️ Exclude Authors</label>
+          <div class="author-chips" id="excluded-authors-chips"></div>
+          <button class="btn-secondary-small" onclick="showAuthorExcludeModal()">+ Add Author</button>
+        </div>
+      </div>
+
+      <div class="filters-footer">
+        <div class="active-filters-display" id="active-filters-display"></div>
+        <button class="btn-apply-filters" onclick="applyFilters()">Apply Filters</button>
+      </div>
+    </div>
+
+    
+    <div id="for-you-section" class="for-you-section" style="display: none;">
+      <h2>🎯 For You</h2>
+      <div class="for-you-carousel" id="for-you-carousel"></div>
+    </div>
+
+    
+    <div id="ai-loading-state" style="display: none;">
+      <div class="loading-state">
+        <div class="loading-spinner-large"></div>
+        <div class="loading-text">🤖 Initializing AI Search Engine...</div>
+        <div class="loading-detail">Loading semantic understanding model (~25MB)</div>
+      </div>
+    </div>
+
+    
+    <div id="search-loading-state" style="display: none;">
+      <div class="loading-state">
+        <div class="loading-spinner-large"></div>
+        <div class="loading-text" id="loading-status">🔍 Searching...</div>
+        <div class="loading-detail" id="loading-detail"></div>
+        <button class="btn-cancel-search" onclick="cancelSearch()">Cancel Search</button>
+      </div>
+    </div>
+
+    
+    <div id="search-info" style="display: none;">
+      <div class="search-info">
+        <div class="search-info-left">
+          <h2 id="results-title">Search Results</h2>
+          <p id="results-subtitle"></p>
+          <div class="active-filters-tags" id="active-filters-tags"></div>
+        </div>
+        <div class="search-info-right">
+          <div class="view-toggle">
+            <button class="view-btn active" data-view="grid" onclick="switchView('grid')">
+              <span>⊞</span>
+            </button>
+            <button class="view-btn" data-view="list" onclick="switchView('list')">
+              <span>☰</span>
+            </button>
+          </div>
+          <div class="search-stats">
+            <div class="search-stat">
+              <div class="search-stat-value" id="stat-total">0</div>
+              <div class="search-stat-label">Results</div>
+            </div>
+            <div class="search-stat">
+              <div class="search-stat-value" id="stat-match">0%</div>
+              <div class="search-stat-label">Avg Match</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    
+    <div id="results-container" class="results-grid"></div>
+
+    
+    <div id="load-more-container" style="display: none; text-align: center; margin: 40px 0;">
+      <button class="btn-load-more" onclick="loadMoreResults()">
+        Load More Results
+      </button>
+    </div>
+
+    
+    <div id="empty-state" class="empty-state">
+      <div class="empty-icon">🔍</div>
+      <h3>Start Your Discovery</h3>
+      <p>Use natural language to find your perfect book. Try asking for books with specific themes, moods, or similar to ones you love!</p>
+    </div>
+  </div>
+
+  
+  <footer>
+    <p>My Book Tracker • Built with ❤️ • Powered by AI</p>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="api.js"></script>
+
+  <!-- Phase 4: Analytics & Monitoring -->
+  <script src="analytics-tracker.js"></script>
+
+  <script type="module">
+    import * as transformers from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1/dist/transformers.min.js';
+    window.transformers = transformers;
+    console.log('✅ Transformers.js loaded and ready');
+  </script>
+
+  <!-- AI Configuration - Secure Server-Side Loading -->
+  <script src="gemini-enhancer.js"></script>
+  <script src="huggingface-embeddings.js"></script>
+  <script src="cohere-reranker.js"></script>
+
+  <script>
+    // Secure AI Configuration Loader
+    // Fetches API keys from server-side environment (never exposed in HTML)
+
+    async function initializeAI() {
+      try {
+        console.log('🔐 Loading AI configuration securely from server...');
+
+        // Fetch API keys from secure server endpoint
+        const token = localStorage.getItem('token');
+
+        if (!token) {
+          console.warn('⚠️ No authentication token found. AI features require login.');
+          initializeFallbackMode();
+          return;
+        }
+
+        const response = await fetch('/api/config/ai-keys', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch AI config: ${response.status}`);
+        }
+
+        const keys = await response.json();
+        console.log('✅ AI configuration loaded securely');
+
+        // Initialize Gemini AI Enhancement
+        if (keys.gemini) {
+          window.geminiEnhancer = new GeminiEnhancer(keys.gemini);
+          console.log('🤖 Gemini AI enhancement enabled');
+          console.log('📊 Gemini quota:', window.geminiEnhancer.getQuotaStatus());
+        } else {
+          console.warn('⚠️ Gemini API key not configured on server');
+          window.geminiEnhancer = { enabled: false };
+        }
+
+        // Initialize Hugging Face Embeddings (optional)
+        if (keys.hf) {
+          window.hfEmbeddings = new HuggingFaceEmbeddings(keys.hf);
+          console.log('🤗 Hugging Face embeddings enabled');
+          console.log('📊 HF quota:', window.hfEmbeddings.getQuotaStatus());
+        } else {
+          console.log('💡 HF embeddings not configured (optional feature)');
+          window.hfEmbeddings = { enabled: false };
+        }
+
+        // Initialize Cohere Reranking
+        if (keys.cohere) {
+          window.cohereReranker = new CohereReranker(keys.cohere);
+          console.log('🎯 Cohere reranking enabled');
+          console.log('📊 Cohere quota:', window.cohereReranker.getQuotaStatus());
+        } else {
+          console.warn('⚠️ Cohere API key not configured on server');
+          window.cohereReranker = { enabled: false };
+        }
+
+        console.log('✨ All AI modules initialized successfully');
+
+      } catch (error) {
+        console.error('❌ Failed to load AI configuration:', error);
+        console.log('⚡ Falling back to local-only mode');
+        initializeFallbackMode();
+      }
+    }
+
+    function initializeFallbackMode() {
+      // Initialize with disabled state for graceful degradation
+      window.geminiEnhancer = { enabled: false };
+      window.hfEmbeddings = { enabled: false };
+      window.cohereReranker = { enabled: false };
+      console.log('⚡ AI features disabled - using local semantic search only');
+    }
+
+    // Initialize AI when page loads
+    initializeAI();
+  </script>
+
+  <!-- Phase 3: Explanation Service -->
+  <script src="explanation-service.js"></script>
+  <script>
+    // Initialize Explanation Service (requires Gemini)
+    // This will be initialized after AI config loads
+    window.explanationService = null;
+
+    // Extend initializeAI to also initialize explanation service
+    const originalInitializeAI = initializeAI;
+    initializeAI = async function() {
+      await originalInitializeAI();
+
+      // Initialize explanation service after Gemini is ready
+      if (window.geminiEnhancer && window.geminiEnhancer.enabled) {
+        window.explanationService = new ExplanationService(window.geminiEnhancer);
+        console.log('💡 Explanation service ready');
+      } else {
+        console.log('💡 Explanation service disabled (requires Gemini)');
+      }
+    };
+
+    // Re-run initialization
+    initializeAI();
+  </script>
+
+  <script src="semantic-search.js"></script>
+  <script src="discover-enhanced.js"></script>
+</body>
+</html>

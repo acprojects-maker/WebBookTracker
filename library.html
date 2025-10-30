@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Library - Book Tracker</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="modal-mobile.css">
+</head>
+<body>
+  <header>
+    <h1>📚 My Book Tracker</h1>
+    <nav>
+  <a href="index.html">Home</a>
+  <a href="library.html">Library</a>
+  <a href="add-book.html">Add Book</a>
+  <a href="discover.html">Discover</a>  
+  <a href="profile.html">👤 Profile</a>
+  <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">☀️</button>
+  <button class="logout-btn" onclick="logout()">🚪 Logout</button>
+</nav>
+  </header>
+
+  <main>
+     <section>
+      <h2>My Complete Library</h2>
+      <p>A collection of all your books, finished and in-progress.</p>
+
+      
+      <div class="library-filters">
+        <div class="filter-group">
+          <label for="filter-status">Status:</label>
+          <select id="filter-status" class="filter-select">
+            <option value="all">All Books</option>
+            <option value="Finished">Read</option>
+            <option value="Currently Reading">Currently Reading</option>
+            <option value="Want to Read">Want to Read</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="filter-genre">Genre:</label>
+          <select id="filter-genre" class="filter-select">
+            <option value="all">All Genres</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="filter-author">Author:</label>
+          <select id="filter-author" class="filter-select">
+            <option value="all">All Authors</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="filter-year">Year Read:</label>
+          <select id="filter-year" class="filter-select">
+            <option value="all">All Years</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="sort-by">Sort By:</label>
+          <select id="sort-by" class="filter-select">
+            <option value="recent">Recently Added</option>
+            <option value="title">Title (A-Z)</option>
+            <option value="author">Author (A-Z)</option>
+            <option value="rating">Rating (High to Low)</option>
+            <option value="date-read">Date Read (Recent)</option>
+          </select>
+        </div>
+
+        <button id="clear-filters" class="btn-clear-filters">Clear All Filters</button>
+      </div>
+
+      <div id="active-filters" class="active-filters" style="display: none;">
+        <span class="filter-label">Active Filters:</span>
+        <div id="filter-tags"></div>
+      </div>
+
+      <div id="filter-results-count" class="filter-results-count"></div>
+
+      <div class="book-list library-shelves" id="complete-library-list" style="margin-top: 30px;">
+        </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>My Book Tracker • Built with ❤️</p>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="api.js"></script>
+  <script src="modal-functions.js"></script>
+  <script src="script.js"></script>
+  <script src="library-filters.js"></script>
+  <script>
+    console.log('🔍 Checking if initializeLibraryFilters is available:', typeof initializeLibraryFilters);
+    console.log('🔍 Checking if bookInputs is available:', typeof bookInputs, window.bookInputs ? window.bookInputs.length : 'not loaded');
+
+    // Call initialization directly after a delay
+    setTimeout(() => {
+      console.log('🎯 Attempting to initialize filters...');
+      console.log('📊 bookInputs:', window.bookInputs ? window.bookInputs.length : 'undefined');
+      console.log('📊 initializeLibraryFilters:', typeof initializeLibraryFilters);
+
+      if (typeof initializeLibraryFilters === 'function') {
+        initializeLibraryFilters();
+      } else {
+        console.error('❌ initializeLibraryFilters is not a function!');
+      }
+    }, 2000);
+  </script>
+</body>
+</html>

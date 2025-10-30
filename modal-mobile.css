@@ -1,0 +1,313 @@
+/* Modal and Overlay Mobile Optimization */
+
+/* Ensure modals are touch-friendly */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+}
+
+.modal-container {
+  background: var(--card-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 2px solid var(--border-color);
+  border-radius: 24px;
+  max-width: 600px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px var(--shadow-color);
+  position: relative;
+  animation: modalSlideUp 0.3s ease;
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 28px;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.modal-header h2 {
+  margin: 0;
+  padding: 0;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.modal-header h2::after {
+  display: none; /* Remove underline in modals */
+}
+
+.modal-close {
+  background: rgba(239, 68, 68, 0.15);
+  border: none;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  min-width: 36px; /* Prevent squishing */
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #ef4444;
+  font-size: 24px;
+  font-weight: bold;
+  line-height: 1;
+  transition: all 0.3s;
+}
+
+.modal-close:hover {
+  background: rgba(239, 68, 68, 0.25);
+  transform: scale(1.1);
+}
+
+.modal-close:active {
+  transform: scale(0.95);
+}
+
+.modal-body {
+  padding: 28px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 20px 28px;
+  border-top: 2px solid var(--border-color);
+}
+
+.btn-modal-cancel,
+.btn-modal-save {
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s;
+  border: none;
+  min-width: 100px; /* Touch-friendly minimum width */
+  min-height: 44px; /* iOS minimum touch target */
+}
+
+.btn-modal-cancel {
+  background: rgba(100, 116, 139, 0.15);
+  border: 2px solid rgba(100, 116, 139, 0.3);
+  color: var(--text-primary);
+}
+
+.btn-modal-cancel:hover {
+  background: rgba(100, 116, 139, 0.25);
+  transform: translateY(-2px);
+}
+
+.btn-modal-save {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.btn-modal-save:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.5);
+}
+
+.btn-modal-save:active,
+.btn-modal-cancel:active {
+  transform: translateY(0);
+}
+
+/* Mobile Modal Optimizations */
+@media (max-width: 768px) {
+  .modal-overlay {
+    padding: 12px;
+    align-items: flex-end; /* Bottom sheet style on mobile */
+  }
+
+  .modal-container {
+    max-height: 85vh;
+    border-radius: 24px 24px 0 0;
+    animation: modalSlideUpMobile 0.3s ease;
+  }
+
+  @keyframes modalSlideUpMobile {
+    from {
+      opacity: 0;
+      transform: translateY(100%);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .modal-header {
+    padding: 20px 20px;
+  }
+
+  .modal-header h2 {
+    font-size: 20px;
+  }
+
+  .modal-body {
+    padding: 20px;
+  }
+
+  .modal-footer {
+    padding: 16px 20px;
+    flex-direction: column-reverse; /* Save button on top on mobile */
+  }
+
+  .btn-modal-cancel,
+  .btn-modal-save {
+    width: 100%;
+    min-height: 48px; /* Larger touch targets on mobile */
+  }
+}
+
+@media (max-width: 480px) {
+  .modal-overlay {
+    padding: 0;
+  }
+
+  .modal-container {
+    border-radius: 20px 20px 0 0;
+    max-height: 90vh;
+  }
+
+  .modal-header {
+    padding: 16px;
+  }
+
+  .modal-header h2 {
+    font-size: 18px;
+  }
+
+  .modal-close {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    font-size: 20px;
+  }
+
+  .modal-body {
+    padding: 16px;
+  }
+
+  .modal-footer {
+    padding: 12px 16px;
+  }
+}
+
+/* Status Button Grid for Mobile */
+.status-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.status-btn {
+  padding: 16px 12px;
+  background: rgba(99, 102, 241, 0.1);
+  border: 2px solid rgba(99, 102, 241, 0.3);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 80px; /* Touch-friendly */
+}
+
+.status-btn:hover {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+}
+
+.status-btn.active {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  border-color: transparent;
+  color: white;
+}
+
+@media (max-width: 480px) {
+  .status-buttons {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .status-btn {
+    flex-direction: row;
+    justify-content: center;
+    min-height: 56px;
+  }
+}
+
+/* Light mode support */
+body.light-mode .modal-overlay {
+  background: rgba(15, 23, 42, 0.7);
+}
+
+body.light-mode .modal-container {
+  background: linear-gradient(135deg, rgba(245, 237, 225, 0.98), rgba(228, 213, 191, 0.95));
+  border: 2px solid rgba(154, 52, 18, 0.45);
+  box-shadow: 0 20px 60px rgba(124, 45, 18, 0.3);
+}
+
+body.light-mode .modal-header,
+body.light-mode .modal-footer {
+  border-color: rgba(154, 52, 18, 0.35);
+}
+
+body.light-mode .modal-close {
+  background: rgba(154, 52, 18, 0.15);
+  color: #9a3412;
+}
+
+body.light-mode .modal-close:hover {
+  background: rgba(154, 52, 18, 0.25);
+}
+
+body.light-mode .status-btn {
+  background: rgba(194, 65, 12, 0.12);
+  border: 2px solid rgba(154, 52, 18, 0.35);
+}
+
+body.light-mode .status-btn:hover {
+  background: rgba(194, 65, 12, 0.22);
+  border-color: var(--accent-primary);
+}
+
+body.light-mode .status-btn.active {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  border-color: transparent;
+  color: white;
+}
