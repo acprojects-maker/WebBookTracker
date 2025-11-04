@@ -44,6 +44,10 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+*.sql
+*.csv
+mysql_backup.sql
+postgres_data.sql
 
 # OS files
 Thumbs.db

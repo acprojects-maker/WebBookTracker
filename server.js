@@ -236,7 +236,7 @@ const limiter = rateLimit({
 // Database connection pool for PostgreSQL (Render)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  ssl: { rejectUnauthorized: false }, // Always use SSL for Render PostgreSQL
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
