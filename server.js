@@ -365,8 +365,9 @@ app.post('/api/auth/register', async (req, res) => {
     );
 
 
-    const baseUrl = process.env.APP_URL || `http://localhost:${PORT}`;
-    const verificationLink = `${baseUrl}/api/auth/verify-email/${verificationToken}`;
+    // Backend URL for API endpoints (where verification endpoint lives)
+    const backendUrl = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+    const verificationLink = `${backendUrl}/api/auth/verify-email/${verificationToken}`;
     const emailHTML = getVerificationEmailHTML(username, verificationLink);
 
     try {
@@ -784,8 +785,9 @@ app.post('/api/auth/resend-verification', async (req, res) => {
     );
 
 
-    const baseUrl = process.env.APP_URL || `http://localhost:${PORT}`;
-    const verificationLink = `${baseUrl}/api/auth/verify-email/${verificationToken}`;
+    // Backend URL for API endpoints (where verification endpoint lives)
+    const backendUrl = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+    const verificationLink = `${backendUrl}/api/auth/verify-email/${verificationToken}`;
     const emailHTML = getVerificationEmailHTML(userDetails.rows[0].username, verificationLink);
 
     try {
